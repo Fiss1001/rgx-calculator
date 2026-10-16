@@ -1,6 +1,6 @@
-# RGX-Calculator (`rgx_web.py`)
+# RGX-Calculator
 
-Eine kleine Webseite, die ausrechnet, wie viele RGX-Punkte eine Spieler:in an einem Turnier oder Ligaspieltag gewinnt oder verliert. Das geht schon am selben Tag, bevor die Playerzone die offiziellen Werte einträgt.
+Eine Webseite, die ausrechnet, wie viele RGX-Punkte ein:e Spieler:in an einem Turnier oder Ligaspieltag gewinnt oder verliert. Das geht schon am selben Tag, bevor die Playerzone die offiziellen Werte einträgt.
 
 ## Aufrufen
 Der RGX-Calculator läuft online unter:
