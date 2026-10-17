@@ -21,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOST = "playerzone.roundnetgermany.de"
+TOUR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "link_tour.mp4")  # Hilfe-Video neben dem Skript
 
 # p aus Sicht von Team 1 je Satzstand
 P_TABLE = {
@@ -213,7 +214,14 @@ nav{{background:#1f1f1f;color:#fff;padding:0 24px;height:64px;display:flex;align
 main{{max-width:1020px;margin:0 auto;padding:24px 16px 48px}}
 form{{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.5rem}}
 input{{padding:.6rem .7rem;border:1px solid #e3d9c4;border-radius:6px;font:inherit}}
-input[name=url]{{flex:1;min-width:240px}} input[name=player]{{width:14rem}}
+.urlbox{{flex:1;min-width:240px;display:flex;gap:.4rem;align-items:center;position:relative}}
+.urlbox input{{flex:1;min-width:0}}
+.help{{width:1.8rem;height:1.8rem;flex:none;border-radius:50%;background:var(--gold);display:grid;place-items:center;
+  font:700 1.1rem 'Barlow Condensed',sans-serif;cursor:help}}
+.tip{{display:none;position:absolute;top:calc(100% + .5rem);left:0;right:0;z-index:5;background:#fff;padding:.6rem;
+  border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.25);font-size:.95rem}}
+.tip video{{display:block;width:100%;margin-top:.4rem;border-radius:4px}}
+.help:hover .tip,.help:focus .tip,.help:focus-within .tip{{display:block}} input[name=player]{{width:14rem}}
 button{{padding:.6rem 1.2rem;border:0;border-radius:6px;background:var(--gold);cursor:pointer;
   font:600 1.05rem 'Barlow Condensed',sans-serif;text-transform:uppercase}}
 .section{{background:var(--panel);border-radius:12px;padding:16px 20px;margin-top:16px;display:flex;
@@ -242,15 +250,24 @@ button{{padding:.6rem 1.2rem;border:0;border-radius:6px;background:var(--gold);c
 <nav>RGX-Calculator</nav>
 <main>
 <form method=get action="/">
-<input name=url placeholder="Playerzone-Link (Turnier-Spielplan oder Liga-Spieltag)" value="{url}" required>
+<div class=urlbox><input name=url placeholder="Playerzone-Link (Turnier-Spielplan oder Liga-Spieltag)" value="{url}" required>
+<span class=help tabindex=0 aria-label="Wo finde ich den Link?">?<span class=tip>
+<b>Wo finde ich den Link?</b><video src="/link_tour.mp4" muted loop playsinline preload=none></video></span></span></div>
 <input name=player placeholder="Name der Spieler:in" value="{player}" required>
 <button>Berechnen</button></form>
 {body}
-</main></body></html>"""
+</main>
+<script>
+const h=document.querySelector('.help'),v=h.querySelector('video'),show=()=>v.play().catch(()=>{{}}),hide=()=>{{v.pause();v.currentTime=0}};
+h.addEventListener('mouseenter',show);h.addEventListener('focus',show);
+h.addEventListener('mouseleave',()=>{{if(document.activeElement!==h)hide()}});h.addEventListener('blur',hide);
+</script></body></html>"""
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == "/link_tour.mp4":
+            return self.send_video()
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         url, player = q.get("url", [""])[0].strip(), q.get("player", [""])[0].strip()
         body = ""
@@ -265,6 +282,30 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
         self.wfile.write(data)
+
+    def send_video(self):
+        # Range-Anfragen unterstuetzen, sonst spielt Safari/iOS das Video nicht ab
+        try:
+            with open(TOUR, "rb") as f:
+                data = f.read()
+        except OSError:
+            self.send_error(404)
+            return
+        start, end = 0, len(data) - 1
+        m = re.match(r"bytes=(\d*)-(\d*)", self.headers.get("Range", ""))
+        if m and (m[1] or m[2]):
+            start, end = (int(m[1]), int(m[2] or end)) if m[1] else (len(data) - int(m[2]), end)
+            end = min(end, len(data) - 1)
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
+        else:
+            self.send_response(200)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.end_headers()
+        self.wfile.write(data[start:end + 1])
 
     def log_message(self, *args):
         pass
