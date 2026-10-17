@@ -9,7 +9,7 @@ Hosting:  ist $PORT gesetzt (z. B. Render), wird dieser Port genutzt.
 Formel (Roundnet Germany), r1/r2 = Team-RGX (Summe beider Spieler:innen):
     e1 = 1 / (1 + 10 ** ((r2 - r1) / 550))
     x1 = b * 50 * (p - e1)        b = 0.75 bei 1-Satz-Spielen, sonst 1
-    pro Spieler:in: round(x1) / 2
+    pro Spieler:in: round(x1) / 2, Summe des Spieltags auf ganze Punkte gerundet
 """
 import html
 import json
@@ -181,6 +181,7 @@ def render(player, rows, title, cards=()):
         return (f"<p class=err>Keine gespielten Spiele mit „{html.escape(player)}“ gefunden. "
                 "Sind Aufstellungen und Ergebnisse schon eingetragen?</p>")
     total = sum(r["delta"] or 0 for r in rows)
+    rounded = int(total + 0.5) if total >= 0 else -int(-total + 0.5)  # RGX wird nur in ganzen Punkten verbucht
     items = []
     for r in rows:
         res = "win" if r["a"] > r["b"] else "loss" if r["a"] < r["b"] else "draw"
@@ -196,7 +197,8 @@ def render(player, rows, title, cards=()):
     return (f"<div class=section><h3>{html.escape(head)}</h3>"
             f"<span class=muted>{html.escape(title)}</span></div>" + player_cards(cards) +
             f"<div class=section><h3>{len(rows)} Spiele</h3>"
-            f"<span class='total {cls(total)}'>{fmt(total, 0 if total == int(total) else 1)}</span></div>"
+            f"<span class='total {cls(total)}'>{fmt(rounded, 0)}"
+            + (f" <small class=muted>({fmt(total)})</small>" if rounded != total else "") + "</span></div>"
             f"<div class=games>{''.join(items)}</div>")
 
 
