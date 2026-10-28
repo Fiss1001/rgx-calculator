@@ -183,7 +183,7 @@ def render(player, rows, title, cards=()):
         return (f"<p class=err>Keine gespielten Spiele mit „{html.escape(player)}“ gefunden. "
                 "Sind Aufstellungen und Ergebnisse schon eingetragen?</p>")
     total = sum(r["delta"] or 0 for r in rows)
-    rounded = math.floor(total)  # Playerzone verbucht ganze Punkte und rundet immer ab
+    rounded = math.floor(total)  # Playerzone verbucht ganze Punkte und rundet immer ab (+36,5 -> +36, -9,5 -> -10)
     items = []
     for r in rows:
         res = "win" if r["a"] > r["b"] else "loss" if r["a"] < r["b"] else "draw"
@@ -201,7 +201,10 @@ def render(player, rows, title, cards=()):
             f"<div class=section><h3>{len(rows)} Spiele</h3>"
             f"<span class='total {cls(total)}'>{fmt(rounded, 0)}"
             + (f" <small class=muted>({fmt(total)})</small>" if rounded != total else "") + "</span></div>"
-            f"<div class=games>{''.join(items)}</div>")
+            f"<div class=games>{''.join(items)}</div>"
+            "<p class=note><b>Hinweis:</b> Die tatsächlichen Ergebnisse können um ±1 RGX abweichen, da in der "
+            "Playerzone nicht vollständig dokumentiert ist, wann auf- oder abgerundet wird. Die bisherigen Tests haben fast überwiegend die richtigen Ergebnisse geliefert, es gibt aber generell keine "
+            "Garantie, dass die berechneten Werte stimmen.</p>")
 
 
 PAGE = """<!doctype html><html lang=de><head><meta charset=utf-8>
@@ -246,6 +249,7 @@ button{{padding:.6rem 1.2rem;border:0;border-radius:6px;background:var(--gold);c
 .res{{color:var(--muted)}} .delta{{text-align:right;font-weight:600}}
 .pos{{color:var(--green)}} .neg{{color:var(--red)}} .muted{{color:var(--muted)}}
 .err{{background:#fdecea;padding:.8rem;border-radius:6px}}
+.note{{margin-top:20px;font-size:.85rem;color:var(--muted);line-height:1.4}}
 @media (max-width:700px){{.pcards{{grid-template-columns:1fr}} .game{{grid-template-columns:1fr auto}} .res{{grid-column:1}} .delta{{grid-row:1/span 2;grid-column:2}}}}
 </style></head><body>
 <nav>RGX-Calculator</nav>
