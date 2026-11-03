@@ -17,6 +17,7 @@ import json
 import os
 import re
 import urllib.parse
+from collections import Counter
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -111,9 +112,13 @@ def collect_games(page):
     """Turnier: Spiele stehen direkt auf der Seite. Liga: Einzelspiele jeder Begegnung nachladen."""
     group = re.search(r"group:\s*(\d+)", page)
     load = lambda enc: json.loads(get(f"/ajax/get-subgames/{enc}", {"group": group.group(1) if group else ""}))
+    encs = list(dict.fromkeys(re.findall(r"show_subgames\('(\d+)'\)", page)))
     with ThreadPoolExecutor(max_workers=8) as pool:
-        subpages = [d.get("html", "") for d in pool.map(load, dict.fromkeys(re.findall(r"show_subgames\('(\d+)'\)", page)))]
-    games = {g["sides"]: g for p in [page] + subpages for g in parse_cards(p)}   # doppelte raus
+        subpages = [d.get("html", "") for d in pool.map(load, encs)]
+    games = {}   # doppelte raus; "enc" = Begegnung, zu der ein Einzelspiel gehoert (None = direkt auf der Seite)
+    for enc, p in [(None, page)] + list(zip(encs, subpages)):
+        for g in parse_cards(p):
+            games.setdefault(g["sides"], dict(g, enc=enc))
     return list(games.values())
 
 
@@ -121,14 +126,22 @@ def absolute(src):
     return urllib.parse.urljoin(f"https://{HOST}/", html.unescape(src)) if src else ""
 
 
-def calculate(url, player):
+def load(url):
+    """Seite laden, alle Spiele sammeln und die Spieler:innen aller Teams holen."""
     if urllib.parse.urlparse(url).hostname != HOST:
         raise ValueError(f"Bitte einen Link auf {HOST} einfuegen.")
     page = get(url)
     games = collect_games(page)
-    cache, key = {}, norm(player)
+    cache = {}
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(lambda s: team_players(s, cache), {s for g in games for s in g["sides"]}))
+    title = re.search(r"<title>(.*?)</title>", page, re.S)
+    return games, cache, text(title.group(1)) if title else ""
+
+
+def calculate(url, player):
+    games, cache, title = load(url)
+    key = norm(player)
     rows = []
     for g in games:
         sides = [team_players(s, cache) for s in g["sides"]]
@@ -150,8 +163,47 @@ def calculate(url, player):
         rgx = {n: v for r in rows for n, v in r["own"]}
         for n in [me] + (sorted(partners) if len(partners) == 1 else []):
             cards.append(dict(cache.get("info", {}).get(n, {}), name=n, rgx=rgx.get(n)))
-    title = re.search(r"<title>(.*?)</title>", page, re.S)
-    return rows, text(title.group(1)) if title else "", cards
+    return rows, title, cards
+
+
+def team_performance(url, team):
+    """Alle Spiele eines Teams am Spieltag. team = Teil des Vereinsnamens oder Name einer Spieler:in.
+    Pro Begegnung wird die eigene Seite ueber Verein/Name bestimmt; Einzelspiele ohne Treffer bekommen
+    die Seite, auf der die schon gefundenen eigenen Spieler:innen stehen (sonst die uebliche Seite)."""
+    games, cache, title = load(url)
+    info = cache.get("info", {})
+    club = lambda n: info.get(n, {}).get("club", "")
+    clubs = Counter(c for g in games for s in g["sides"] for c in {club(n) for n, _ in team_players(s, cache)} if c)
+    key = norm(team)
+    hit = lambda ps: bool(key) and any(key in norm(n) or key in norm(club(n)) for n, _ in ps)
+    rows = []
+    for enc in dict.fromkeys(g["enc"] for g in games):
+        gs = [(g, [team_players(s, cache) for s in g["sides"]]) for g in games if g["enc"] == enc]
+        mine = {}
+        for i, (g, sides) in enumerate(gs):
+            h = [hit(ps) for ps in sides]
+            if h[0] != h[1]:
+                mine[i] = h.index(True)
+        ours = {n for i, m in mine.items() for n, _ in gs[i][1][m]}
+        usual = Counter(mine.values()).most_common(1)
+        for i, (g, sides) in enumerate(gs):
+            if i not in mine:
+                overlap = [len(ours & {n for n, _ in ps}) for ps in sides]
+                if overlap[0] != overlap[1]:
+                    mine[i] = overlap.index(max(overlap))
+                elif enc is not None and usual:
+                    mine[i] = usual[0][0]
+                else:
+                    continue
+            m = mine[i]
+            own, opp = sides[m], sides[1 - m]
+            a, b = g["sets"] if m == 0 else g["sets"][::-1]
+            r1 = sum(r for _, r in own) if len(own) == 2 else None
+            r2 = sum(r for _, r in opp) if len(opp) == 2 else None
+            rows.append({"label": g["label"], "enc": enc, "own": own, "opp": opp, "a": a, "b": b,
+                         "delta": delta(r1, r2, a, b) if r1 and r2 else None,
+                         "opp_club": Counter(club(n) for n, _ in opp if club(n)).most_common(1)})
+    return rows, title, info, clubs
 
 
 # ---------------------------------------------------------------- Ausgabe
@@ -201,10 +253,102 @@ def render(player, rows, title, cards=()):
             f"<div class=section><h3>{len(rows)} Spiele</h3>"
             f"<span class='total {cls(total)}'>{fmt(rounded, 0)}"
             + (f" <small class=muted>({fmt(total)})</small>" if rounded != total else "") + "</span></div>"
-            f"<div class=games>{''.join(items)}</div>"
-            "<p class=note><b>Hinweis:</b> Die tatsächlichen Ergebnisse können um ±1 RGX abweichen, da in der "
-            "Playerzone nicht vollständig dokumentiert ist, wann auf- oder abgerundet wird. Die bisherigen Tests haben fast überwiegend die richtigen Ergebnisse geliefert, es gibt aber generell keine "
-            "Garantie, dass die berechneten Werte stimmen.</p>")
+            f"<div class=games>{''.join(items)}</div>" + NOTE)
+
+
+NOTE = ("<p class=note><b>Hinweis:</b> Die tatsächlichen Ergebnisse können um ±1 RGX abweichen, da in der "
+        "Playerzone nicht vollständig dokumentiert ist, wann auf- oder abgerundet wird. Generell gibt es keine "
+        "Garantie, dass die berechneten Werte stimmen. Alle Angaben ohne Gewähr.</p>")
+
+
+def result(r):
+    return "win" if r["a"] > r["b"] else "loss" if r["a"] < r["b"] else "draw"
+
+
+def club_logos(info):
+    """Verein -> Logo-URL (erstes Logo, das bei einer Spieler:in des Vereins steht)."""
+    logos = {}
+    for c in info.values():
+        if c.get("club") and c.get("logo"):
+            logos.setdefault(c["club"], c["logo"])
+    return logos
+
+
+def logo_img(logos, club, css="clogo"):
+    src = logos.get(club, "")
+    return f'<img class={css} src="{html.escape(src, quote=True)}" referrerpolicy=no-referrer alt="">' if src else ""
+
+
+def team_chips(url, clubs, label, logos, active=""):
+    if not clubs:
+        return ""
+    q = lambda c: html.escape("/team?" + urllib.parse.urlencode({"url": url, "team": c}), quote=True)
+    return (f"<div class=chips><span class=muted>{label}</span>"
+            + "".join(f"<a class='chip{' on' if c == active else ''}' href=\"{q(c)}\">{logo_img(logos, c)}{html.escape(c)}</a>"
+                      for c, _ in clubs.most_common()) + "</div>")
+
+
+def render_team(url, team, rows, title, info, clubs):
+    logos = club_logos(info)
+    if not team:
+        return team_chips(url, clubs, "Team wählen:", logos) or "<p class=err>Keine Spiele mit Ergebnissen gefunden.</p>"
+    if not rows:
+        return (f"<p class=err>Keine gespielten Spiele für „{html.escape(team)}“ gefunden. Teil des Vereinsnamens "
+                "oder Name einer Spieler:in eingeben.</p>" + team_chips(url, clubs, "Teams auf diesem Spieltag:", logos))
+    encs = list(dict.fromkeys(r["enc"] for r in rows))
+    opp = {}
+    for e in encs:
+        c = Counter(r["opp_club"][0][0] for r in rows if r["enc"] == e and r["opp_club"]).most_common(1)
+        opp[e] = c[0][0] if c else "Gegner"
+    club = lambda n: info.get(n, {}).get("club", "")
+    own_club = Counter(club(n) for r in rows for n, _ in r["own"] if club(n)).most_common(1)
+    name = own_club[0][0] if own_club else team
+    players = {}
+    for r in rows:
+        for n, v in r["own"]:
+            players.setdefault(n, {"rgx": v, "rows": []})["rows"].append(r)
+
+    def tile(r, me):
+        partner = " & ".join(n for n, _ in r["own"] if n != me) or "?"
+        tip = f"{r['label']} · mit {partner} vs {' & '.join(n for n, _ in r['opp']) or '?'} · {r['a']}:{r['b']}"
+        return (f"<span class='tile {result(r)}' title=\"{html.escape(tip, quote=True)}\">"
+                f"<b>{r['a']}:{r['b']}</b><small>{html.escape(r['label'])}</small></span>")
+
+    def bar(rs):
+        w, l = sum(result(r) == "win" for r in rs), sum(result(r) == "loss" for r in rs)
+        pct = round(100 * w / len(rs))
+        return (f"<span class=wl><b class=pos>{w} S</b> · <b class=neg>{l} N</b></span>"
+                f"<span class=bar title='{pct} % gewonnen'><i style='width:{pct}%'></i></span>")
+
+    # gleich breite Spalten je Begegnung, damit die Kacheln aller Spieler:innen untereinander stehen
+    width = {e: max(sum(r["enc"] == e for r in p["rows"]) for p in players.values()) * 62 for e in encs}
+    cards = []
+    for n, p in sorted(players.items(), key=lambda kv: -len(kv[1]["rows"])):
+        c = info.get(n, {})
+        photo = (f'<img class=tphoto src="{html.escape(c["img"], quote=True)}" referrerpolicy=no-referrer alt="">'
+                 if c.get("img") else "<div class=tphoto></div>")
+        groups = "".join(
+            f"<div class=tgrp style='min-width:{width[e]}px'><small>vs {html.escape(opp[e])}</small><div class=tiles>"
+            + ("".join(tile(r, n) for r in p["rows"] if r["enc"] == e) or "<span class='tile none'>–</span>")
+            + "</div></div>" for e in encs)
+        cards.append(f"<div class=tp>{photo}<div class=tpmain><div class=tphead><div><div class=pname>{html.escape(n)}</div>"
+                     f"<div class=pclub>{html.escape(c.get('club', ''))}</div></div>"
+                     f"<span class=badge><b>RGX</b> {p['rgx'] or '?'}</span></div>"
+                     f"<div class=tpstrip>{groups}</div>"
+                     f"<div class=tpfoot>{bar(p['rows'])}</div></div></div>")
+    matches = []
+    for e in encs:
+        rs = [r for r in rows if r["enc"] == e]
+        w, l = sum(result(r) == "win" for r in rs), sum(result(r) == "loss" for r in rs)
+        res = "win" if w > l else "loss" if w < l else "draw"
+        matches.append(f"<div class='match {res}'><small>vs</small> {logo_img(logos, opp[e])}<b>{html.escape(opp[e])}</b>"
+                       f"<span class=mscore>{w}:{l}</span></div>")
+    return (team_chips(url, clubs, "Team wechseln:", logos, name) +
+            f"<div class=section><h3 class=teamh>{logo_img(logos, name, 'tlogo')}Team: {html.escape(name)}</h3>"
+            f"<span class=muted>{html.escape(title)}</span></div>"
+            f"<div class=section><h3>{len(rows)} Spiele</h3><div class=teamsum>{bar(rows)}</div></div>"
+            f"<div class=matches>{''.join(matches)}</div>"
+            f"<div class=tps>{''.join(cards)}</div>")
 
 
 PAGE = """<!doctype html><html lang=de><head><meta charset=utf-8>
@@ -250,16 +394,44 @@ button{{padding:.6rem 1.2rem;border:0;border-radius:6px;background:var(--gold);c
 .pos{{color:var(--green)}} .neg{{color:var(--red)}} .muted{{color:var(--muted)}}
 .err{{background:#fdecea;padding:.8rem;border-radius:6px}}
 .note{{margin-top:20px;font-size:.85rem;color:var(--muted);line-height:1.4}}
-@media (max-width:700px){{.pcards{{grid-template-columns:1fr}} .game{{grid-template-columns:1fr auto}} .res{{grid-column:1}} .delta{{grid-row:1/span 2;grid-column:2}}}}
+.tabs{{display:flex;gap:4px;margin-bottom:1.2rem;border-bottom:2px solid #e3d9c4}}
+.tabs a{{padding:.55rem 1.1rem;color:#555;text-decoration:none;border-radius:8px 8px 0 0;margin-bottom:-2px;
+  font:600 1.1rem 'Barlow Condensed',sans-serif;text-transform:uppercase;border-bottom:3px solid transparent}}
+.tabs a.on{{color:#1d1d1d;background:var(--panel);border-bottom-color:var(--gold)}}
+.chips{{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-top:16px}}
+.chip{{background:#fff;border:2px solid var(--gold);border-radius:999px;padding:.3rem .85rem;color:#1d1d1d;text-decoration:none;font-weight:600}}
+.chip{{display:inline-flex;align-items:center;gap:.4rem}} .chip:hover,.chip.on{{background:var(--gold)}}
+.clogo{{width:24px;height:24px;object-fit:contain;flex:none}} .match .clogo{{align-self:center}}
+.teamh{{display:flex;align-items:center;gap:.7rem}} .tlogo{{width:52px;height:52px;object-fit:contain;flex:none}}
+.teamsum,.tpfoot{{display:flex;align-items:center;gap:.8rem;flex-wrap:wrap}}
+.teamsum .bar{{width:180px}} .wl{{white-space:nowrap}}
+.bar{{display:inline-block;width:120px;height:10px;border-radius:5px;background:var(--red);overflow:hidden}}
+.bar i{{display:block;height:100%;background:var(--green)}}
+.matches{{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:16px}}
+.match{{display:flex;align-items:baseline;gap:.4rem;background:#fff;border-radius:8px;padding:10px 14px;border-left:6px solid var(--muted);
+  box-shadow:0 2px 6px rgba(0,0,0,.08)}}
+.match.win{{border-left-color:var(--green)}} .match.loss{{border-left-color:var(--red)}}
+.match b{{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.mscore{{margin-left:auto;font:700 1.4rem 'Barlow Condensed',sans-serif}}
+.tps{{display:flex;flex-direction:column;gap:14px;margin-top:20px}}
+.tp{{display:flex;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 3px 10px rgba(0,0,0,.12)}}
+.tphoto{{width:120px;flex-shrink:0;object-fit:cover;background:#ddd}}
+.tpmain{{flex:1;min-width:0;padding:12px 16px;display:flex;flex-direction:column;gap:.6rem}}
+.tphead{{display:flex;justify-content:space-between;align-items:flex-start;gap:.5rem}}
+.tpstrip{{display:flex;flex-wrap:wrap;gap:12px}}
+.tgrp>small{{display:block;color:var(--muted);font-size:.75rem;margin-bottom:3px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.tiles{{display:flex;gap:4px}}
+.tile{{width:58px;height:44px;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:#fff;cursor:default;background:var(--muted)}}
+.tile b{{font:700 1.05rem 'Barlow Condensed',sans-serif;line-height:1}}
+.tile small{{font-size:.68rem;font-weight:600;max-width:54px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.tile.win{{background:var(--green)}} .tile.loss{{background:var(--red)}} .tile.none{{background:#eee;color:#aaa}}
+@media (max-width:700px){{.tphoto{{width:72px;height:90px;align-self:flex-start;margin:12px 0 0 12px;border-radius:8px}} .tpmain{{padding:12px}} .pcards{{grid-template-columns:1fr}} .game{{grid-template-columns:1fr auto}} .res{{grid-column:1}} .delta{{grid-row:1/span 2;grid-column:2}}}}
 </style></head><body>
 <nav>RGX-Calculator</nav>
 <main>
-<form method=get action="/">
-<div class=urlbox><input name=url placeholder="Playerzone-Link (Turnier-Spielplan oder Liga-Spieltag)" value="{url}" required>
-<span class=help tabindex=0 aria-label="Wo finde ich den Link?">?<span class=tip>
-<b>Wo finde ich den Link?</b><video src="/link_tour.mp4" muted loop playsinline preload=none></video></span></span></div>
-<input name=player placeholder="Name der Spieler:in" value="{player}" required>
-<button>Berechnen</button></form>
+{tabs}
+{form}
 {body}
 </main>
 <script>
@@ -269,20 +441,49 @@ h.addEventListener('mouseleave',()=>{{if(document.activeElement!==h)hide()}});h.
 </script></body></html>"""
 
 
+HELP = """<span class=help tabindex=0 aria-label="Wo finde ich den Link?">?<span class=tip>
+<b>Wo finde ich den Link?</b><video src="/link_tour.mp4" muted loop playsinline preload=none></video></span></span>"""
+
+FORM_RGX = """<form method=get action="/">
+<div class=urlbox><input name=url placeholder="Playerzone-Link (Turnier-Spielplan oder Liga-Spieltag)" value="{url}" required>
+{help}</div>
+<input name=player placeholder="Name der Spieler:in" value="{player}" required>
+<button>Berechnen</button></form>"""
+
+FORM_TEAM = """<form method=get action="/team">
+<div class=urlbox><input name=url placeholder="Playerzone-Link zum Liga-Spieltag" value="{url}" required>
+{help}</div>
+<input name=team placeholder="Team / Verein (optional)" value="{player}">
+<button>Anzeigen</button></form>"""
+
+
+def tabs(active, url):
+    q = "?" + urllib.parse.urlencode({"url": url}) if url else ""
+    return "<div class=tabs>" + "".join(
+        f'<a href="{path}{html.escape(q, quote=True)}"{" class=on" if path == active else ""}>{name}</a>'
+        for path, name in (("/", "RGX-Bilanz"), ("/team", "Teamperformance"))) + "</div>"
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/link_tour.mp4":
             return self.send_video()
-        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-        url, player = q.get("url", [""])[0].strip(), q.get("player", [""])[0].strip()
+        parsed = urllib.parse.urlparse(self.path)
+        team_tab = parsed.path.rstrip("/") == "/team"
+        q = urllib.parse.parse_qs(parsed.query)
+        url = q.get("url", [""])[0].strip()
+        player = q.get("team" if team_tab else "player", [""])[0].strip()
         body = ""
-        if url and player:
-            try:
+        try:
+            if team_tab and url:
+                body = render_team(url, player, *team_performance(url, player))
+            elif url and player:
                 body = render(player, *calculate(url, player))
-            except Exception as e:
-                body = f"<p class=err>Fehler: {html.escape(str(e))}</p>"
-        data = PAGE.format(url=html.escape(url, quote=True), player=html.escape(player, quote=True),
-                           body=body).encode("utf-8")
+        except Exception as e:
+            body = f"<p class=err>Fehler: {html.escape(str(e))}</p>"
+        form = (FORM_TEAM if team_tab else FORM_RGX).format(
+            url=html.escape(url, quote=True), player=html.escape(player, quote=True), help=HELP)
+        data = PAGE.format(tabs=tabs("/team" if team_tab else "/", url), form=form, body=body).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
