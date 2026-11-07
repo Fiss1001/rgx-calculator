@@ -62,30 +62,55 @@ def norm(name):
     return text(name).lower()
 
 
+def popup_html(resp):
+    """Antwort von get-team-info: frueher JSON {html: ...}; zur Sicherheit auch reines HTML annehmen."""
+    try:
+        data = json.loads(resp)
+    except ValueError:
+        return resp
+    if isinstance(data, dict):
+        if isinstance(data.get("html"), str):
+            return data["html"]
+        return " ".join(v for v in data.values() if isinstance(v, str))
+    return resp
+
+
 def team_players(args, cache):
     """Popup beim Klick auf einen Teamnamen: load_team_info(_, team, md_group, division, game)
-    -> [(Name, RGX)] der beiden Spieler:innen."""
+    -> [(Name, RGX)] der beiden Spieler:innen.
+    Versteht das alte Popup (player-team-card, player-name ...) und das neue (rg-team-popup--player ...)."""
     if args not in cache:
         a = [x if x != "null" else "" for x in args] + [""] * 5
         try:
-            raw = json.loads(get("/tournament/get-team-info", {
-                "id": a[1], "md_group_id": a[2], "division_id": a[3], "game_id": a[4]}))["html"]
+            resp = get("/tournament/get-team-info", {
+                "id": a[1], "md_group_id": a[2], "division_id": a[3], "game_id": a[4]})
+            raw = popup_html(resp)
+            cache.setdefault("popup_sample", resp[:600])
             # je Spielerkarte im Popup: Foto, Name, RGX, Vereinslogo, Verein
             players = []
-            for card in raw.split('class="player-team-card')[1:]:
-                name = re.search(r'class="player-name">(.*?)</div>', card, re.S)
-                score = re.search(r'score="(\d+)"', card)
-                img = re.search(r'class="player-img">\s*<img[^>]*src="([^"]+)"', card)
-                logo = re.search(r'class="player-club">\s*<img[^>]*src="([^"]+)"', card)
-                club = re.search(r'class="[^"]*club">(.*?)</div>', card, re.S)
-                if name and score:
+            for card in re.split(r'class="(?:player-team-card|rg-team-popup--player(?![-\w]))', raw)[1:]:
+                name = (re.search(r'class="player-name">(.*?)</div>', card, re.S) or
+                        re.search(r'class="[^"]*(?:--name|player-name)(?![-\w])[^"]*"[^>]*>(.*?)</(?:div|span|a|p|h\d)>',
+                                  card, re.S))
+                score = re.search(r'score="(\d+)"', card) or re.search(r'class="[^"]*(?:score|badge|rgx)[^"]*"[^>]*>\D{0,20}(\d{3,4})\b', card)
+                img = (re.search(r'class="player-img">\s*<img[^>]*src="([^"]+)"', card) or
+                       re.search(r'<img[^>]*class="[^"]*(?:avatar|photo|player-img)[^"]*"[^>]*src="([^"]+)"', card) or
+                       re.search(r'class="[^"]*(?:avatar|photo|player-img)[^"]*"[^>]*>\s*<img[^>]*src="([^"]+)"', card))
+                logo = (re.search(r'class="player-club">\s*<img[^>]*src="([^"]+)"', card) or
+                        re.search(r'<img[^>]*class="[^"]*(?:club|logo)[^"]*"[^>]*src="([^"]+)"', card) or
+                        re.search(r'class="[^"]*club[^"]*"[^>]*>\s*<img[^>]*src="([^"]+)"', card))
+                club = next((c for c in map(text, re.findall(r'class="[^"]*club">(.*?)</div>', card, re.S) +
+                                         re.findall(r'class="[^"]*club(?:-name)?"[^>]*>(.*?)</(?:div|span|a|p)>', card, re.S))
+                             if c), "")
+                if name and score and text(name.group(1)):
                     players.append((text(name.group(1)), int(score.group(1))))
                     cache.setdefault("info", {})[players[-1][0]] = {
                         "img": absolute(img.group(1)) if img else "",
                         "logo": absolute(logo.group(1)) if logo else "",
-                        "club": text(club.group(1)) if club else ""}
+                        "club": club}
             cache[args] = players
-        except Exception:
+        except Exception as e:
+            cache.setdefault("errors", []).append(f"Team-Popup: {type(e).__name__}: {e}")
             cache[args] = []
     return cache[args]
 
@@ -108,32 +133,48 @@ def parse_cards(page):
     return games
 
 
-def md_group_bodies(page):
+def md_group_bodies(page, diag=None):
     """Liga: Die Playerzone rendert nur die Spieltagsgruppe, auf der man landet (z. B. Gruppe A).
     Die anderen Gruppen sind leere Container mit data-md-group-id, deren Inhalt die Seite per
     /tournament/md-group-body/<id> nachlaedt. Das machen wir hier genauso."""
-    ids = list(dict.fromkeys(re.findall(r'data-md-group-id="?(\d+)', page)))
+    ids = re.findall(r'data-md-group-id="?(\d+)', page)
+    # zur Sicherheit alle Gruppen-Tabs (show_md_group(<id>)) laden; doppelte Spiele fliegen spaeter raus
+    ids += [i for i in re.findall(r"show_md_group\((\d+)\)", page) if i != "0"]
+    ids = list(dict.fromkeys(ids))
     def body(i):
         try:
             return json.loads(get(f"/tournament/md-group-body/{i}")).get("html", "")
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.setdefault("errors", []).append(f"Gruppe {i}: {type(e).__name__}: {e}")
             return ""
+    if diag is not None:
+        diag["gruppen"] = ids
     with ThreadPoolExecutor(max_workers=3) as pool:
         return list(pool.map(body, ids))
 
 
-def collect_games(page):
+def collect_games(page, diag=None):
     """Turnier: Spiele stehen direkt auf der Seite. Liga: Einzelspiele jeder Begegnung nachladen."""
-    page = "\n".join([page] + md_group_bodies(page))
+    diag = {} if diag is None else diag
+    page = "\n".join([page] + md_group_bodies(page, diag))
     group = re.search(r"group:\s*(\d+)", page)
-    load = lambda enc: json.loads(get(f"/ajax/get-subgames/{enc}", {"group": group.group(1) if group else ""}))
+    def load(enc):
+        try:
+            return json.loads(get(f"/ajax/get-subgames/{enc}", {"group": group.group(1) if group else ""}))
+        except Exception as e:
+            diag.setdefault("errors", []).append(f"Begegnung {enc}: {type(e).__name__}: {e}")
+            return {}
     encs = list(dict.fromkeys(re.findall(r"show_subgames\('(\d+)'\)", page)))
+    diag["begegnungen"] = len(encs)
     with ThreadPoolExecutor(max_workers=8) as pool:
         subpages = [d.get("html", "") for d in pool.map(load, encs)]
     games = {}   # doppelte raus; "enc" = Begegnung, zu der ein Einzelspiel gehoert (None = direkt auf der Seite)
     for enc, p in [(None, page)] + list(zip(encs, subpages)):
         for g in parse_cards(p):
             games.setdefault(g["sides"], dict(g, enc=enc))
+    diag["karten"] = page.count("<rg-game-card") + sum(p.count("<rg-game-card") for p in subpages)
+    diag["spiele"] = len(games)
     return list(games.values())
 
 
@@ -146,8 +187,8 @@ def load(url):
     if urllib.parse.urlparse(url).hostname != HOST:
         raise ValueError(f"Bitte einen Link auf {HOST} einfuegen.")
     page = get(url)
-    games = collect_games(page)
-    cache = {}
+    cache = {"diag": {"seite": len(page)}}
+    games = collect_games(page, cache["diag"])
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(lambda s: team_players(s, cache), {s for g in games for s in g["sides"]}))
     title = re.search(r"<title>(.*?)</title>", page, re.S)
@@ -178,7 +219,9 @@ def calculate(url, player):
         rgx = {n: v for r in rows for n, v in r["own"]}
         for n in [me] + (sorted(partners) if len(partners) == 1 else []):
             cards.append(dict(cache.get("info", {}).get(n, {}), name=n, rgx=rgx.get(n)))
-    return rows, title, cards
+    diag = dict(cache["diag"], teams=sum(1 for s in {s for g in games for s in g["sides"]} if team_players(s, cache)),
+                namen=sorted(cache.get("info", {})), popup=cache.get("popup_sample", ""), errors=cache["diag"].get("errors", []) + cache.get("errors", []))
+    return rows, title, cards, diag
 
 
 def team_performance(url, team):
@@ -245,10 +288,28 @@ def player_cards(cards):
     return f'<div class="pcards n{len(cards)}">{"".join(out)}</div>' if out else ""
 
 
-def render(player, rows, title, cards=()):
+def diagnose(d):
+    """Kurzer Bericht, was beim Auslesen gefunden wurde (nur wenn kein Spiel passt)."""
+    if not d:
+        return ""
+    e = d.get("errors", [])
+    lines = [f"Seite geladen: {d.get('seite', 0)} Zeichen",
+             f"Nachgeladene Gruppen: {', '.join(d.get('gruppen', [])) or 'keine'}",
+             f"Begegnungen: {d.get('begegnungen', 0)}, Spielkarten: {d.get('karten', 0)}, "
+             f"Spiele mit Ergebnis: {d.get('spiele', 0)}, Teams mit Spieler:innen: {d.get('teams', 0)}",
+             f"Fehler: {len(e)}" + (f" (z. B. {e[0]})" if e else "")]
+    names = d.get("namen", [])
+    return ("<details class=note><summary>Diagnose</summary><p>" + "<br>".join(html.escape(l) for l in lines) +
+            "</p>" + (f"<p><b>Gefundene Namen:</b> {html.escape(', '.join(names))}</p>" if names else "") +
+            (f"<p><b>Popup-Antwort (Anfang):</b></p><pre style='white-space:pre-wrap;font-size:12px'>"
+             f"{html.escape(d['popup'])}</pre>" if not d.get("teams") and d.get("popup") else "") +
+            "</details>")
+
+
+def render(player, rows, title, cards=(), diag=None):
     if not rows:
         return (f"<p class=err>Keine gespielten Spiele mit „{html.escape(player)}“ gefunden. "
-                "Sind Aufstellungen und Ergebnisse schon eingetragen?</p>")
+                "Sind Aufstellungen und Ergebnisse schon eingetragen?</p>" + diagnose(diag))
     total = sum(r["delta"] or 0 for r in rows)
     rounded = math.floor(total)  # Playerzone verbucht ganze Punkte und rundet immer ab (+36,5 -> +36, -9,5 -> -10)
     items = []
