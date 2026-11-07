@@ -108,8 +108,23 @@ def parse_cards(page):
     return games
 
 
+def md_group_bodies(page):
+    """Liga: Die Playerzone rendert nur die Spieltagsgruppe, auf der man landet (z. B. Gruppe A).
+    Die anderen Gruppen sind leere Container mit data-md-group-id, deren Inhalt die Seite per
+    /tournament/md-group-body/<id> nachlaedt. Das machen wir hier genauso."""
+    ids = list(dict.fromkeys(re.findall(r'data-md-group-id="?(\d+)', page)))
+    def body(i):
+        try:
+            return json.loads(get(f"/tournament/md-group-body/{i}")).get("html", "")
+        except Exception:
+            return ""
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        return list(pool.map(body, ids))
+
+
 def collect_games(page):
     """Turnier: Spiele stehen direkt auf der Seite. Liga: Einzelspiele jeder Begegnung nachladen."""
+    page = "\n".join([page] + md_group_bodies(page))
     group = re.search(r"group:\s*(\d+)", page)
     load = lambda enc: json.loads(get(f"/ajax/get-subgames/{enc}", {"group": group.group(1) if group else ""}))
     encs = list(dict.fromkeys(re.findall(r"show_subgames\('(\d+)'\)", page)))
