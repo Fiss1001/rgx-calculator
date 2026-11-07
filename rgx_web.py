@@ -11,7 +11,11 @@ Formel (Roundnet Germany), r1/r2 = Team-RGX (Summe beider Spieler:innen):
     x1 = b * 50 * (p - e1)        b = 0.75 bei 1-Satz-Spielen, sonst 1
     pro Spieler:in: round(x1) / 2, Summe des Spieltags immer abgerundet
 """
+import gzip
 import html
+import http.client
+import threading
+import time
 import math
 import json
 import os
@@ -45,13 +49,43 @@ def delta(r1, r2, own, opp):
 
 # ---------------------------------------------------------------- Playerzone abfragen
 
-def get(path, params=None):
+POOL = ThreadPoolExecutor(max_workers=16)   # bleibt bestehen, damit die Verbindungen der Threads offen bleiben
+_local = threading.local()   # pro Thread eine offene Verbindung (Keep-Alive spart den TLS-Aufbau je Abfrage)
+
+
+def _conn(host, fresh=False):
+    conns = _local.__dict__.setdefault("conns", {})
+    if fresh or host not in conns:
+        if host in conns:
+            conns[host].close()
+        conns[host] = http.client.HTTPSConnection(host, timeout=30)
+    return conns[host]
+
+
+def get(path, params=None, _redirects=3):
     url = path if path.startswith("http") else f"https://{HOST}{path}"
     if params:
-        url += "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "X-Requested-With": "XMLHttpRequest"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+        url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
+    u = urllib.parse.urlsplit(url)
+    target = (u.path or "/") + (f"?{u.query}" if u.query else "")
+    headers = {"User-Agent": "Mozilla/5.0", "X-Requested-With": "XMLHttpRequest", "Accept-Encoding": "gzip"}
+    for attempt in range(2):   # eine abgelaufene Keep-Alive-Verbindung einmal neu aufbauen
+        conn = _conn(u.hostname, fresh=attempt > 0)
+        try:
+            conn.request("GET", target, headers=headers)
+            resp = conn.getresponse()
+            body = resp.read()
+            break
+        except (http.client.HTTPException, OSError):
+            if attempt:
+                raise
+    if resp.status in (301, 302, 303, 307, 308) and _redirects:
+        return get(urllib.parse.urljoin(url, resp.getheader("Location", "")), None, _redirects - 1)
+    if resp.status >= 400:
+        raise OSError(f"HTTP Error {resp.status}: {resp.reason} ({target[:80]})")
+    if resp.getheader("Content-Encoding", "") == "gzip":
+        body = gzip.decompress(body)
+    return body.decode("utf-8", errors="replace")
 
 
 def text(fragment):
@@ -150,8 +184,7 @@ def md_group_bodies(page, diag=None):
             return ""
     if diag is not None:
         diag["gruppen"] = ids
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        return list(pool.map(body, ids))
+    return list(POOL.map(body, ids))
 
 
 def collect_games(page, diag=None):
@@ -167,8 +200,7 @@ def collect_games(page, diag=None):
             return {}
     encs = list(dict.fromkeys(re.findall(r"show_subgames\('(\d+)'\)", page)))
     diag["begegnungen"] = len(encs)
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        subpages = [d.get("html", "") for d in pool.map(load, encs)]
+    subpages = [d.get("html", "") for d in POOL.map(load, encs)]
     games = {}   # doppelte raus; "enc" = Begegnung, zu der ein Einzelspiel gehoert (None = direkt auf der Seite)
     for enc, p in [(None, page)] + list(zip(encs, subpages)):
         for g in parse_cards(p):
@@ -182,15 +214,35 @@ def absolute(src):
     return urllib.parse.urljoin(f"https://{HOST}/", html.unescape(src)) if src else ""
 
 
+CACHE_SECONDS = 300   # gleicher Link innerhalb von 5 Minuten (anderer Name, anderes Team) kommt aus dem Speicher
+_loaded, _locks, _locks_lock = {}, {}, threading.Lock()
+
+
 def load(url):
-    """Seite laden, alle Spiele sammeln und die Spieler:innen aller Teams holen."""
+    """Seite laden, alle Spiele sammeln und die Spieler:innen aller Teams holen.
+    Das Ergebnis bleibt CACHE_SECONDS im Speicher, damit Teamwechsel und weitere Namen sofort gehen."""
     if urllib.parse.urlparse(url).hostname != HOST:
         raise ValueError(f"Bitte einen Link auf {HOST} einfuegen.")
+    key = url.split("#")[0]
+    with _locks_lock:
+        lock = _locks.setdefault(key, threading.Lock())
+    with lock:   # parallele Aufrufe desselben Links laden nur einmal
+        hit = _loaded.get(key)
+        if hit and time.time() - hit[0] < CACHE_SECONDS:
+            return hit[1]
+        result = _load(key)
+        for k in [k for k, (t, _) in _loaded.items() if time.time() - t >= CACHE_SECONDS]:
+            del _loaded[k]
+        if result[0]:   # leere Ergebnisse (z. B. Fehler) nicht merken
+            _loaded[key] = (time.time(), result)
+        return result
+
+
+def _load(url):
     page = get(url)
     cache = {"diag": {"seite": len(page)}}
     games = collect_games(page, cache["diag"])
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        list(pool.map(lambda s: team_players(s, cache), {s for g in games for s in g["sides"]}))
+    list(POOL.map(lambda s: team_players(s, cache), {s for g in games for s in g["sides"]}))
     title = re.search(r"<title>(.*?)</title>", page, re.S)
     return games, cache, text(title.group(1)) if title else ""
 
