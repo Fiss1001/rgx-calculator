@@ -522,7 +522,7 @@ button{{padding:.6rem 1.2rem;border:0;border-radius:6px;background:var(--gold);c
 .pos{{color:var(--green)}} .neg{{color:var(--red)}} .muted{{color:var(--muted)}}
 .err{{background:#fdecea;padding:.8rem;border-radius:6px}}
 .note{{margin-top:20px;font-size:.85rem;color:var(--muted);line-height:1.4}}
-.tabs{{display:flex;gap:4px;margin-bottom:1.2rem;border-bottom:2px solid #e3d9c4}}
+.tabs{{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:1.2rem;border-bottom:2px solid #e3d9c4}}
 .tabs a{{padding:.55rem 1.1rem;color:#555;text-decoration:none;border-radius:8px 8px 0 0;margin-bottom:-2px;
   font:600 1.1rem 'Barlow Condensed',sans-serif;text-transform:uppercase;border-bottom:3px solid transparent}}
 .tabs a.on{{color:#1d1d1d;background:var(--panel);border-bottom-color:var(--gold)}}
@@ -563,11 +563,399 @@ button{{padding:.6rem 1.2rem;border:0;border-radius:6px;background:var(--gold);c
 {body}
 </main>
 <script>
-const h=document.querySelector('.help'),v=h.querySelector('video'),show=()=>v.play().catch(()=>{{}}),hide=()=>{{v.pause();v.currentTime=0}};
+const h=document.querySelector('.help');if(h){{const v=h.querySelector('video'),show=()=>v.play().catch(()=>{{}}),hide=()=>{{v.pause();v.currentTime=0}};
 h.addEventListener('mouseenter',show);h.addEventListener('focus',show);
-h.addEventListener('mouseleave',()=>{{if(document.activeElement!==h)hide()}});h.addEventListener('blur',hide);
+h.addEventListener('mouseleave',()=>{{if(document.activeElement!==h)hide()}});h.addEventListener('blur',hide)}}
 </script></body></html>"""
 
+
+# Infoseite: Formel Schritt fuer Schritt, interaktiv (Tab "Wie funktioniert die RGX-Berechnung?")
+INFO = r"""<style>
+:root{--rx-bg:#fffcf5;--surface:#fff;--ink:#1d1d1d;--muted:#7a7468;--line:#e3d9c4;--own:#1f6fa8;--own-soft:#e3eef7;
+--opp:#9a6b3e;--opp-soft:#f6ead9;--ball:#f6b83b;--win:#2e9d3a;--win-soft:#e3f3e5;--loss:#c0392b;--loss-soft:#fbe5e2;
+--f-display:'Barlow Condensed','Arial Narrow',sans-serif;--f-body:Barlow,system-ui,sans-serif;--f-mono:ui-monospace,Menlo,Consolas,monospace}
+.rx { font-family: var(--f-body); font-size: 17px; line-height: 1.55; }
+.rx { max-width: 860px; display: flex; flex-direction: column; gap: 28px; }
+.rx h1, .rx h2, .rx h3 { font-family: var(--f-display); font-weight: 700; line-height: 1.05; margin: 0; text-wrap: balance; letter-spacing: .01em; }
+.rx h1 { font-size: clamp(40px, 7vw, 64px); font-weight: 800; text-transform: uppercase; }
+.rx h2 { font-size: 30px; }.rx p { margin: 0; }
+.lede { color: var(--muted); max-width: 62ch; font-size: 17px; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.mono { font-family: var(--f-mono); }
+.num { font-variant-numeric: tabular-nums; }
+
+header { display: flex; flex-direction: column; gap: 12px; }
+.ballmark { display: inline-flex; align-items: center; gap: 10px; }
+.ballmark svg { flex: none; }
+
+/* Rechner */
+.calc { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px; display: flex; flex-direction: column; gap: 20px; }
+.teams { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: stretch; }
+.team { border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.team.own { background: var(--own-soft); }
+.team.opp { background: var(--opp-soft); }
+.team h3 { font-size: 20px; text-transform: uppercase; }
+.team.own h3 { color: var(--own); }
+.team.opp h3 { color: var(--opp); }
+.field { display: flex; flex-direction: column; gap: 3px; }
+.field label { font-size: 13px; color: var(--muted); }
+.field input {
+  font-family: var(--f-mono); font-size: 18px; padding: 8px 10px; width: 100%;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink);
+}
+.field input:focus-visible, .score:focus-visible { outline: 3px solid var(--ball); outline-offset: 1px; }
+.rxsum { font-family: var(--f-mono); font-size: 14px; color: var(--muted); }
+.rxsum b { color: var(--ink); font-size: 18px; }
+.vs { align-self: center; font-family: var(--f-display); font-weight: 800; font-size: 26px; color: var(--muted); }
+
+.scores { display: flex; flex-direction: column; gap: 10px; }
+.scoregroups { display: flex; flex-wrap: wrap; gap: 14px 22px; }
+.sgroup { display: flex; flex-direction: column; gap: 6px; }
+.sgroup span { font-size: 12px; color: var(--muted); }
+.sbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+.score {
+  font-family: var(--f-mono); font-size: 15px; font-weight: 600; padding: 7px 11px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--rx-bg); color: var(--ink);
+}
+.score.w { border-color: color-mix(in srgb, var(--win) 45%, var(--line)); }
+.score.l { border-color: color-mix(in srgb, var(--loss) 45%, var(--line)); }
+.score[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+
+.rxresult { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; border-top: 1px dashed var(--line); padding-top: 18px; }
+.rxresult .big { font-family: var(--f-display); font-weight: 800; font-size: 64px; line-height: 1; }
+.rxresult .big.pos { color: var(--win); }
+.rxresult .big.neg { color: var(--loss); }
+.rxresult .big.zero { color: var(--muted); }
+.rxresult p { color: var(--muted); max-width: 46ch; }
+
+/* Schritte */
+.steps { display: flex; flex-direction: column; gap: 0; }
+.step { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 18px; padding-block: 22px; border-top: 1px solid var(--line); }
+.step:first-child { border-top: 0; }
+.stepno {
+  width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--ball); color: #1d1d1d; font-family: var(--f-display); font-weight: 800; font-size: 24px;
+}
+.stepbody { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.stepbody > p { max-width: 64ch; }
+.formula {
+  font-family: var(--f-mono); font-size: 15px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 14px; overflow-x: auto; white-space: nowrap;
+}
+.formula .v { font-weight: 600; }
+.formula .o { color: var(--own); font-weight: 600; }
+.formula .g { color: var(--opp); font-weight: 600; }
+.formula .r { color: var(--muted); }
+.chart { width: 100%; overflow-x: auto; }
+.chart svg { display: block; width: 100%; height: auto; min-width: 560px; }
+.chart text { font-family: var(--f-mono); font-size: 11px; fill: var(--muted); }
+.chart .lbl { fill: var(--ink); font-weight: 600; font-size: 12px; }
+
+/* Satzstand-Tabelle */
+.ptable { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
+.pcell { border-radius: 8px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
+.pcell .s { font-family: var(--f-mono); font-weight: 600; font-size: 15px; }
+.pcell .alt { font-family: var(--f-mono); font-size: 11px; color: var(--muted); }
+.pcell .pv { font-family: var(--f-mono); font-size: 13px; color: var(--muted); }
+.pcell.on { outline: 3px solid var(--ball); outline-offset: -1px; }
+
+/* Rundung */
+.round { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-family: var(--f-mono); font-size: 18px; }
+.rxchip { padding: 6px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); }
+.rxchip.final { background: var(--ink); color: var(--surface); border-color: var(--ink); font-weight: 600; }
+.arrow { color: var(--muted); }
+.rxnote { font-size: 14px; color: var(--muted); max-width: 64ch; }
+
+/* Faustregeln */
+.rules { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.rule { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+.rule b { font-family: var(--f-display); font-size: 22px; font-weight: 700; }
+.rule span { font-size: 14px; color: var(--muted); }
+.rxlegend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--muted); }
+.rxlegend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+footer { font-size: 13px; color: var(--muted); }
+
+@media (max-width: 600px) {
+  .teams { grid-template-columns: 1fr; }
+  .vs { justify-self: center; }
+  .step { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .calc { padding: 16px; }
+  .rules { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chart circle.marker, .chart line.marker { transition: cx .25s, cy .25s, x1 .25s, x2 .25s; }
+}
+</style>
+
+
+<div class="rx">
+  <header>
+    <div class="ballmark">
+      <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="15" fill="var(--ball)"/><path d="M5 12c8 3 16 3 24 0M5 22c8-3 16-3 24 0" stroke="#13222E" stroke-width="1.6" fill="none"/></svg>
+      <span class="eyebrow">Roundnet Germany · RGX</span>
+    </div>
+    <h1>So entsteht dein RGX-Wert</h1>
+    <p class="lede">Pro Spiel vergleicht die Formel, was von deinem Team <b>erwartet</b> wurde, mit dem, was ihr <b>erreicht</b> habt. Die Lücke dazwischen wird zu Punkten. Probier es unten aus: Alle Schritte rechnen live mit.</p>
+  </header>
+
+  <section class="calc" aria-label="Rechner">
+    <div class="teams">
+      <div class="team own">
+        <h3>Dein Team</h3>
+        <div class="field"><label for="a1">Du (RGX)</label><input id="a1" type="number" inputmode="numeric" value="980" step="10"></div>
+        <div class="field"><label for="a2">Partner:in (RGX)</label><input id="a2" type="number" inputmode="numeric" value="1020" step="10"></div>
+        <div class="rxsum">r1 = <b class="num" id="r1o">2000</b></div>
+      </div>
+      <div class="vs">vs</div>
+      <div class="team opp">
+        <h3>Gegner</h3>
+        <div class="field"><label for="b1">Gegner:in 1 (RGX)</label><input id="b1" type="number" inputmode="numeric" value="1040" step="10"></div>
+        <div class="field"><label for="b2">Gegner:in 2 (RGX)</label><input id="b2" type="number" inputmode="numeric" value="1060" step="10"></div>
+        <div class="rxsum">r2 = <b class="num" id="r2o">2100</b></div>
+      </div>
+    </div>
+
+    <div class="scores">
+      <span class="eyebrow">Satzstand aus deiner Sicht</span>
+      <div class="scoregroups" id="scoregroups"></div>
+    </div>
+
+    <div class="rxresult" aria-live="polite">
+      <div class="big num" id="big">−7,5</div>
+      <p id="bigtext">RGX-Punkte für dich in diesem Spiel.</p>
+    </div>
+  </section>
+
+  <section aria-label="Rechenweg">
+    <h2>Der Rechenweg in fünf Schritten</h2>
+    <div class="steps">
+
+      <div class="step">
+        <div class="stepno">1</div>
+        <div class="stepbody">
+          <h3>Team-RGX addieren</h3>
+          <p>Jedes Team bekommt einen gemeinsamen Wert: die Summe der RGX beider Spieler:innen. Wichtig ist am Ende nur der <b>Abstand</b> zwischen den beiden Teams.</p>
+          <div class="formula" id="f1"></div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="stepno">2</div>
+        <div class="stepbody">
+          <h3>Erwartung berechnen (e1)</h3>
+          <p>Aus dem Abstand folgt, wie viel vom Spiel dein Team „holen sollte“, zwischen 0 und 1. Gleich starke Teams liegen bei 0,5. Bei 550 Punkten Vorsprung erwartet die Formel schon 0,91.</p>
+          <div class="formula" id="f2"></div>
+          <div class="chart" id="curve"></div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="stepno">3</div>
+        <div class="stepbody">
+          <h3>Ergebnis in eine Zahl übersetzen (p)</h3>
+          <p>Der Satzstand wird zu einem Wert zwischen 0 und 1. Ein klarer Sieg zählt 1, eine klare Niederlage 0. Knappe Spiele liegen dazwischen.</p>
+          <div class="ptable" id="ptable"></div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="stepno">4</div>
+        <div class="stepbody">
+          <h3>Lücke mal 50 (x1)</h3>
+          <p>Die Differenz zwischen Erreicht (p) und Erwartet (e1) wird mit 50 multipliziert. Bei Spielen mit nur einem Satz zählt das Ganze nur zu 75&nbsp;% (b = 0,75). Das ist das Plus oder Minus für das <b>ganze Team</b>.</p>
+          <div class="chart" id="gap"></div>
+          <div class="formula" id="f4"></div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="stepno">5</div>
+        <div class="stepbody">
+          <h3>Runden und teilen</h3>
+          <p>Der Teamwert wird auf eine ganze Zahl gerundet (x,5 immer weg von der Null) und dann halbiert. Deshalb gibt es pro Spiel Werte in 0,5er-Schritten.</p>
+          <div class="round" id="roundrow"></div>
+          <p class="rxnote">Am Ende eines Turniers oder Spieltags werden alle Spiele addiert. Weil der RGX nur in ganzen Punkten verbucht wird, wird diese Summe <b>abgerundet</b>: aus +36,5 werden +36, aus −9,5 werden −10.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section aria-label="Überblick" style="display:flex;flex-direction:column;gap:14px">
+    <h2>Wie viel ist drin?</h2>
+    <p class="lede">Punkte pro Spieler:in je nach RGX-Abstand, für Spiele über zwei oder drei Sätze. Der gelbe Strich ist dein Abstand von oben.</p>
+    <div class="chart" id="overview"></div>
+    <div class="rxlegend" id="rxlegend"></div>
+    <div class="rules">
+      <div class="rule"><b>Höchstens ±25</b><span>pro Spieler:in und Spiel. So viel gibt es nur für einen Sieg gegen ein haushoch überlegenes Team.</span></div>
+      <div class="rule"><b>Gleich stark = ±12,5</b><span>bei gleichem Team-RGX bringt ein 2:0 genau +12,5, ein 0:2 genau −12,5.</span></div>
+      <div class="rule"><b>Favorit verliert mehr</b><span>Je größer dein Vorsprung, desto weniger bringt ein Sieg und desto mehr kostet eine Niederlage.</span></div>
+      <div class="rule"><b>1 Satz = 75 %</b><span>Spiele mit nur einem Satz zählen weniger, weil das Ergebnis zufälliger ist.</span></div>
+    </div>
+  </section>
+
+  <footer>Formel wie in den anderen Tabs: e1 = 1 / (1 + 10^((r2 − r1) / 550)), x1 = b · 50 · (p − e1), pro Spieler:in round(x1) / 2. Gerechnet wird mit dem RGX vor dem Spiel.</footer>
+</div>
+
+<script>
+
+const P = {"1:0":1,"2:0":1,"3:0":1,"3:1":.75,"2:1":.67,"3:2":.6,"1:1":.5,"2:2":.5,"2:3":.4,"1:2":.33,"1:3":.25,"0:1":0,"0:2":0,"0:3":0};
+const GROUPS = [
+  ["1 Satz", ["1:0","0:1"]],
+  ["2 Sätze", ["2:0","1:1","0:2"]],
+  ["3 Sätze", ["2:1","1:2"]],
+  ["Best of 5", ["3:0","3:1","3:2","2:3","1:3","0:3"]],
+];
+let score = "0:1";
+const $ = id => document.getElementById(id);
+const fmt = (x, d = 1) => {
+  const s = Math.abs(x).toFixed(d).replace(".", ",");
+  return (x > 0 ? "+" : x < 0 ? "−" : "±") + s;
+};
+const fnum = (x, d = 3) => x.toFixed(d).replace(".", ",").replace("-", "−");
+const roundHalfAway = x => x >= 0 ? Math.floor(x + .5) : -Math.floor(-x + .5);
+const expected = d => 1 / (1 + Math.pow(10, -d / 550)); // d = r1 - r2
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+// Satzstand-Buttons und p-Tabelle
+const sg = $("scoregroups"), pt = $("ptable");
+GROUPS.forEach(([name, list]) => {
+  const g = document.createElement("div"); g.className = "sgroup";
+  g.innerHTML = `<span>${name}</span><div class="sbtns"></div>`;
+  list.forEach(s => {
+    const [a, b] = s.split(":").map(Number);
+    const btn = document.createElement("button");
+    btn.className = "score " + (a > b ? "w" : a < b ? "l" : "");
+    btn.textContent = s; btn.dataset.s = s; btn.type = "button";
+    btn.addEventListener("click", () => { score = s; update(); });
+    g.querySelector(".sbtns").appendChild(btn);
+  });
+  sg.appendChild(g);
+});
+["1:0","3:1","2:1","3:2","1:1","2:3","1:2","1:3","0:1"].forEach(s => {
+  const alt = s === "1:0" ? "auch 2:0, 3:0" : s === "0:1" ? "auch 0:2, 0:3" : s === "1:1" ? "auch 2:2" : "";
+  const c = document.createElement("div"); c.className = "pcell"; c.dataset.p = P[s];
+  c.innerHTML = `<span class="s">${s}</span><span class="alt">${alt || "&nbsp;"}</span><span class="pv">p = ${String(P[s]).replace(".", ",")}</span>`;
+  pt.appendChild(c);
+});
+
+const NS = "http://www.w3.org/2000/svg";
+function svg(w, h) { const s = document.createElementNS(NS, "svg"); s.setAttribute("viewBox", `0 0 ${w} ${h}`); return s; }
+function el(tag, attrs, parent) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; }
+function text(t, attrs, parent) { const e = el("text", attrs, parent); e.textContent = t; return e; }
+
+// Schritt 2: Erwartungskurve
+function drawCurve(d, e) {
+  const W = 760, H = 260, L = 46, R = 16, T = 16, B = 40;
+  const xs = v => L + (v + 1000) / 2000 * (W - L - R);
+  const ys = v => T + (1 - v) * (H - T - B);
+  const s = svg(W, H);
+  [0, .25, .5, .75, 1].forEach(v => {
+    el("line", {x1: L, x2: W - R, y1: ys(v), y2: ys(v), stroke: css("--line"), "stroke-width": 1}, s);
+    text(String(v).replace(".", ","), {x: L - 8, y: ys(v) + 4, "text-anchor": "end"}, s);
+  });
+  [-1000, -550, 0, 550, 1000].forEach(v => {
+    text((v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v), {x: xs(v), y: H - B + 18, "text-anchor": "middle"}, s);
+  });
+  text("Abstand r1 − r2 (dein Team minus Gegner)", {x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle"}, s);
+  let path = "";
+  for (let v = -1000; v <= 1000; v += 10) path += (v === -1000 ? "M" : "L") + xs(v).toFixed(1) + " " + ys(expected(v)).toFixed(1);
+  el("path", {d: path, fill: "none", stroke: css("--own"), "stroke-width": 3}, s);
+  const cd = Math.max(-1000, Math.min(1000, d));
+  el("line", {x1: xs(cd), x2: xs(cd), y1: ys(0), y2: ys(e), stroke: css("--ball"), "stroke-width": 2, "stroke-dasharray": "4 3"}, s);
+  el("line", {x1: L, x2: xs(cd), y1: ys(e), y2: ys(e), stroke: css("--ball"), "stroke-width": 2, "stroke-dasharray": "4 3"}, s);
+  el("circle", {cx: xs(cd), cy: ys(e), r: 7, fill: css("--ball"), stroke: css("--ink"), "stroke-width": 2}, s);
+  const right = xs(cd) < W - 200;
+  text(`e1 = ${fnum(e)}`, {x: xs(cd) + (right ? 12 : -12), y: ys(e) - 10, "text-anchor": right ? "start" : "end", class: "lbl"}, s);
+  $("curve").replaceChildren(s);
+}
+
+// Schritt 4: Lücke zwischen erwartet und erreicht
+function drawGap(e, p, x1) {
+  const W = 760, H = 120, L = 20, R = 20, Y = 62;
+  const xs = v => L + v * (W - L - R);
+  const s = svg(W, H);
+  el("rect", {x: L, y: Y - 6, width: W - L - R, height: 12, rx: 6, fill: css("--line")}, s);
+  const good = p >= e;
+  el("rect", {x: xs(Math.min(e, p)), y: Y - 6, width: Math.max(2, Math.abs(xs(p) - xs(e))), height: 12, rx: 3, fill: good ? css("--win") : css("--loss")}, s);
+  [0, .5, 1].forEach(v => text(String(v).replace(".", ","), {x: xs(v), y: Y + 30, "text-anchor": v === 0 ? "start" : v === 1 ? "end" : "middle"}, s));
+  // Marker
+  const mk = (v, col, label, up) => {
+    el("line", {x1: xs(v), x2: xs(v), y1: Y - 14, y2: Y + 14, stroke: col, "stroke-width": 3}, s);
+    const anchor = v < .12 ? "start" : v > .88 ? "end" : "middle";
+    text(label, {x: xs(v), y: up ? Y - 22 : Y + 48, "text-anchor": anchor, class: "lbl", fill: col}, s);
+  };
+  const close = Math.abs(xs(p) - xs(e)) < 150;
+  mk(e, css("--own"), `erwartet e1 = ${fnum(e, 2)}`, true);
+  mk(p, css("--ink"), `erreicht p = ${fnum(p, 2)}`, !close ? true : false);
+  $("gap").replaceChildren(s);
+}
+
+// Überblick: Punkte pro Spieler:in nach Abstand
+const LINES = [
+  ["2:0", "--win", ""], ["2:1", "--win", "6 4"], ["1:1", "--muted", ""], ["1:2", "--loss", "6 4"], ["0:2", "--loss", ""],
+];
+function drawOverview(d) {
+  const W = 760, H = 300, L = 46, R = 46, T = 14, B = 40;
+  const xs = v => L + (v + 800) / 1600 * (W - L - R);
+  const ys = v => T + (25 - v) / 50 * (H - T - B);
+  const s = svg(W, H);
+  [-25, -12.5, 0, 12.5, 25].forEach(v => {
+    el("line", {x1: L, x2: W - R, y1: ys(v), y2: ys(v), stroke: css("--line"), "stroke-width": v === 0 ? 1.6 : 1}, s);
+    text(fmt(v, v % 1 ? 1 : 0).replace("±", ""), {x: L - 8, y: ys(v) + 4, "text-anchor": "end"}, s);
+  });
+  [-800, -400, 0, 400, 800].forEach(v => text((v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v), {x: xs(v), y: H - B + 18, "text-anchor": "middle"}, s));
+  text("Abstand r1 − r2", {x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle"}, s);
+  const cd = Math.max(-800, Math.min(800, d));
+  el("line", {x1: xs(cd), x2: xs(cd), y1: T, y2: H - B, stroke: css("--ball"), "stroke-width": 3}, s);
+  LINES.forEach(([sc, col, dash]) => {
+    let path = "";
+    for (let v = -800; v <= 800; v += 10) {
+      const val = 50 * (P[sc] - expected(v)) / 2;
+      path += (v === -800 ? "M" : "L") + xs(v).toFixed(1) + " " + ys(val).toFixed(1);
+    }
+    el("path", {d: path, fill: "none", stroke: css(col), "stroke-width": 2.5, "stroke-dasharray": dash}, s);
+    const endV = 50 * (P[sc] - expected(800)) / 2;
+    text(sc, {x: W - R + 6, y: ys(endV) + 4, class: "lbl", fill: css(col)}, s);
+  });
+  $("overview").replaceChildren(s);
+  $("rxlegend").innerHTML = LINES.map(([sc, col, dash]) =>
+    `<span><i style="background:var(${col});${dash ? "background:repeating-linear-gradient(90deg,var(" + col + ") 0 5px,transparent 5px 8px)" : ""}"></i>${sc}</span>`).join("");
+}
+
+function update() {
+  const v = id => Number($(id).value) || 0;
+  const a1 = v("a1"), a2 = v("a2"), b1 = v("b1"), b2 = v("b2");
+  const r1 = a1 + a2, r2 = b1 + b2, d = r1 - r2;
+  const e = expected(d), p = P[score];
+  const [sa, sb] = score.split(":").map(Number);
+  const b = sa + sb === 1 ? .75 : 1;
+  const x1 = b * 50 * (p - e);
+  const rx = roundHalfAway(x1), per = rx / 2;
+
+  $("r1o").textContent = r1; $("r2o").textContent = r2;
+  document.querySelectorAll(".score").forEach(btn => btn.setAttribute("aria-pressed", btn.dataset.s === score));
+  document.querySelectorAll(".pcell").forEach(c => c.classList.toggle("on", Number(c.dataset.p) === p));
+
+  const big = $("big");
+  big.textContent = fmt(per);
+  big.className = "big num " + (per > 0 ? "pos" : per < 0 ? "neg" : "zero");
+  const res = sa > sb ? "Sieg" : sa < sb ? "Niederlage" : "Unentschieden";
+  $("bigtext").textContent = `RGX-Punkte für dich (und deine:n Partner:in) bei ${res} ${score}. Fürs ganze Team sind es ${fmt(rx, 0)}.`;
+
+  $("f1").innerHTML = `r1 = <span class="o">${a1} + ${a2} = ${r1}</span> &nbsp;&nbsp; r2 = <span class="g">${b1} + ${b2} = ${r2}</span> &nbsp;&nbsp; <span class="r">Abstand</span> <span class="v">${d > 0 ? "+" : d < 0 ? "−" : ""}${Math.abs(d)}</span>`;
+  $("f2").innerHTML = `e1 = 1 / (1 + 10^((<span class="g">${r2}</span> − <span class="o">${r1}</span>) / 550)) = <span class="v">${fnum(e)}</span>`;
+  $("f4").innerHTML = `x1 = <span class="v">${String(b).replace(".", ",")}</span> · 50 · (<span class="v">${fnum(p, 2)}</span> − <span class="o">${fnum(e)}</span>) = <span class="v">${fnum(x1, 2)}</span> <span class="r">${b < 1 ? "← 1 Satz, daher 0,75" : "← mehrere Sätze, b = 1"}</span>`;
+  $("roundrow").innerHTML = `<span class="rxchip">x1 = ${fnum(x1, 2)}</span><span class="arrow">runden →</span><span class="rxchip">${fmt(rx, 0)}</span><span class="arrow">÷ 2 →</span><span class="rxchip final">${fmt(per)} pro Person</span>`;
+
+  drawCurve(d, e); drawGap(e, p, x1); drawOverview(d);
+}
+["a1","a2","b1","b2"].forEach(id => $(id).addEventListener("input", update));
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", update);
+new MutationObserver(update).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
+update();
+</script>
+"""
 
 HELP = """<span class=help tabindex=0 aria-label="Wo finde ich den Link?">?<span class=tip>
 <b>Wo finde ich den Link?</b><video src="/link_tour.mp4" muted loop playsinline preload=none></video></span></span>"""
@@ -589,7 +977,8 @@ def tabs(active, url):
     q = "?" + urllib.parse.urlencode({"url": url}) if url else ""
     return "<div class=tabs>" + "".join(
         f'<a href="{path}{html.escape(q, quote=True)}"{" class=on" if path == active else ""}>{name}</a>'
-        for path, name in (("/", "RGX-Bilanz"), ("/team", "Teamperformance"))) + "</div>"
+        for path, name in (("/", "RGX-Bilanz"), ("/team", "Teamperformance"),
+                            ("/formel", "Wie funktioniert die RGX-Berechnung?"))) + "</div>"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -600,6 +989,8 @@ class Handler(BaseHTTPRequestHandler):
         team_tab = parsed.path.rstrip("/") == "/team"
         q = urllib.parse.parse_qs(parsed.query)
         url = q.get("url", [""])[0].strip()
+        if parsed.path.rstrip("/") == "/formel":
+            return self.send_page(PAGE.format(tabs=tabs("/formel", url), form="", body=INFO))
         player = q.get("team" if team_tab else "player", [""])[0].strip()
         body = ""
         try:
@@ -611,7 +1002,10 @@ class Handler(BaseHTTPRequestHandler):
             body = f"<p class=err>Fehler: {html.escape(str(e))}</p>"
         form = (FORM_TEAM if team_tab else FORM_RGX).format(
             url=html.escape(url, quote=True), player=html.escape(player, quote=True), help=HELP)
-        data = PAGE.format(tabs=tabs("/team" if team_tab else "/", url), form=form, body=body).encode("utf-8")
+        self.send_page(PAGE.format(tabs=tabs("/team" if team_tab else "/", url), form=form, body=body))
+
+    def send_page(self, page):
+        data = page.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
